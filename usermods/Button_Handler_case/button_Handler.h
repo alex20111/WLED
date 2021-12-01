@@ -1,11 +1,7 @@
 #pragma once
 
 #include "wled.h"
-// #include "/nodemcuv2/JC_BUTTON/src/JC_BUTTON.h"
-
-/*
-
- */
+#include <Wire.h>
 
 //class name. Use something descriptive and leave the ": public Usermod" part :)
 
@@ -54,6 +50,7 @@ private:
   int wifiShutdown = 1;        //Time to wifi to shutdown in minutes.
   int lstWifiShutdownTime = 1; // same as wifiShutdown.. to verify if variable has changed.
   bool wifiShutdownEnabled = true;
+  bool lstWifiShutdownEnabled = true;
   bool wifiAsleep = false;
   unsigned long wifiSleepStartCountdown = 0;
 
@@ -66,6 +63,10 @@ private:
   int8_t presets[nbrOfPreset];
   int8_t lastSelectedPreset = -1;
 
+  int potReading = 0;
+  int lastPotRead = 0;
+  unsigned long prevPotReading = 0;
+
 public:
   //Functions called by WLED
 
@@ -75,15 +76,24 @@ public:
      */
   void setup()
   {
+
+    Wire.begin();
+
     pinManager.allocatePin(BTN1_PIN, false, PinOwner::UM_BTN_H);  //no
     pinManager.allocatePin(BTN2_PIN, false, PinOwner::UM_BTN_H);  //yes
     pinManager.allocatePin(LED_SLEEP, false, PinOwner::UM_BTN_H); //no
     pinManager.allocatePin(LED_WIFI, false, PinOwner::UM_BTN_H);  //yes
 
+    bool pot = pinManager.allocatePin(A0, false, PinOwner::UM_BTN_H); //yes
+
+    Serial.print(F("Analog pin free: "));
+    Serial.println(pot);
+
     pinMode(LED_SLEEP, OUTPUT);
     pinMode(LED_WIFI, OUTPUT);
     pinMode(BTN1_PIN, INPUT);
     pinMode(BTN2_PIN, INPUT);
+    // pinMode(POT_PIN, INPUT);
 
     if (lastSelectedPreset > -1)
     {
@@ -95,6 +105,9 @@ public:
     wifiSleepStartCountdown = millis();
     lstWifiShutdownTime = wifiShutdown; //in case user change it in the settings
     lstTimeToSleep = timeToSleep;
+    lstWifiShutdownEnabled = wifiShutdownEnabled;
+
+    prevPotReading = millis();
   }
 
   /*
@@ -123,8 +136,8 @@ public:
 
     handleWifi();
 
-
-    if (lstTimeToSleep != timeToSleep){
+    if (lstTimeToSleep != timeToSleep)
+    {
       Serial.println(F("Reset TIME TO SLEEP "));
       sleepStartCountdown = millis();
       lstTimeToSleep = timeToSleep;
@@ -138,7 +151,9 @@ public:
       digitalWrite(LED_SLEEP, LOW);
     }
 
-    debug();
+    handlePotentiometer();
+
+    // debug();
   }
 
   /*
@@ -252,7 +267,6 @@ public:
 
     bool configComplete = !top.isNull();
 
-
     configComplete &= getJsonValue(top[FPSTR(_enbWifiShutdown)], wifiShutdownEnabled, true);
     configComplete &= getJsonValue(top[FPSTR(_wifi_sleep)], wifiShutdown, 10);
     configComplete &= getJsonValue(top[FPSTR(_time_to_sleep)], timeToSleep); //top["preset1"] = presets[0];
@@ -295,7 +309,6 @@ public:
 
     if (btn2State == LOW && !button2Pressed)
     {
-      Serial.println(F("Button 2 pressed - sleep"));
       button2Pressed = true;
       if (sleepEnabled) //if sleep is enabled
       {
@@ -393,12 +406,13 @@ public:
   void handleWifi()
   {
 
-    if (lstWifiShutdownTime != wifiShutdown)
+    if (lstWifiShutdownTime != wifiShutdown || lstWifiShutdownEnabled != wifiShutdownEnabled)
     {
       //reset wifiSleepStartCountdown since time has changed.
       Serial.println(F("!!!!reset wifi time shutdown"));
       wifiSleepStartCountdown = millis();
       lstWifiShutdownTime = wifiShutdown;
+      lstWifiShutdownEnabled = wifiShutdownEnabled;
     }
 
     //timer to shutdown the wifi
@@ -434,6 +448,46 @@ public:
     {
       bri = 0;
       colorUpdated(2);
+    }
+  }
+
+  void handlePotentiometer()
+  {
+    if (millis() - prevPotReading > 500)
+    {
+
+      Wire.requestFrom(4, 1); // request 1 byte from slave device address 4
+
+      int potResult = 0;
+      while (Wire.available()) // slave may send less than requested
+      {
+        potResult = Wire.read(); // receive a byte as character
+      }
+
+      int isJitterValue = potResult - lastPotRead;
+      if (isJitterValue < 0)
+      {
+        isJitterValue = isJitterValue * -1;
+      }
+      if (isJitterValue >= 2)
+      {
+        lastPotRead = potResult;
+        if (potResult > 250)
+        {
+          bri = 255;
+        }
+        else if (potResult < 5)
+        {
+          bri = 0;
+        }
+        else
+        {
+          bri = potResult;
+        }
+
+        colorUpdated(2);
+      }
+      prevPotReading = millis();
     }
   }
 
